@@ -38,6 +38,7 @@ def check_config():  #called at beginning of main to verify that the config look
             RADIOport = config['Radio'].get('port')
             baud = config['Radio'].get('baud') 
             DMTport = config['DMT'].get('port') 
+            AUXport = config['AUX'].get('port')
             ALEport = config['ALE'].get('port')
             if None in [RADIOport,baud,DMTport,ALEport]:
                 print('dmtalemux.ini erros found.  Launching settings window...')
@@ -52,6 +53,7 @@ def check_config():  #called at beginning of main to verify that the config look
         config['Radio'] = {'baud': '19200','port': 'COM7'}
         config['DMT'] = {'port': 'COM15'}
         config['ALE'] = {'port': 'COM17'}
+        config['AUX'] = {'port': 'COM19', '#enable': False}
         with open('dmtalemux.ini', 'w') as configfile:
             config.write(configfile)
         settings()
@@ -73,19 +75,23 @@ def settings(): # settings() will open the .ini file, allow user edits, save .in
         RADIOport = config['Radio'].get('port')
         baud = config['Radio'].get('baud','19200') 
         DMTport = config['DMT'].get('port') 
+        AUXport = config['AUX'].get('port') 
         ALEport = config['ALE'].get('port')
+        AUXENABLE = config['AUX'].getboolean('enable',False)
         # serial_list = serial_ports()
         
     col2_layout = [ [sg.Button('Save')],
                     [sg.Checkbox('Modem\nLogging',default=LOGGING, key="logging", change_submits = False)],
                     [sg.Checkbox('Minimize\non open',default=minimize, disabled=True, 
                          key="minim", change_submits = False)],
-                    [sg.Checkbox('Log to File', disabled=True, change_submits = False)]]
+                    [sg.Checkbox('Log to File', disabled=True, change_submits = False)],
+                    [sg.Checkbox('Use AUX Port', key="enable", default=AUXENABLE, change_submits = False)]]
     col1_layout = [
             [sg.Text('baud:',size=(14,1), justification="center"),sg.OptionMenu(['1200','2400','9600','19200','57600'], key='baud', default_value=baud)],
             [sg.Text('Radio port:',size=(14,1), justification="center"),sg.OptionMenu(serial_list, key='radio', default_value=str(RADIOport))],
             [sg.Text('MS-DMT port:',size=(14,1), justification="center"),sg.OptionMenu(serial_list, key='dmt', default_value=str(DMTport))],
-            [sg.Text('MARS-ALE port:',size=(14,1), justification="center"),sg.OptionMenu(serial_list, key='ale', default_value=str(ALEport))]]
+            [sg.Text('MARS-ALE port:',size=(14,1), justification="center"),sg.OptionMenu(serial_list, key='ale', default_value=str(ALEport))],
+            [sg.Text('Aux port:',size=(14,1), justification="center"),sg.OptionMenu(serial_list, key='aux', default_value=str(AUXport))]]
     layout = [[sg.Frame('',col1_layout, size=(110,1500)),sg.Column(col2_layout,vertical_alignment='t')]]
     #sg.change_look_and_feel('LightBlue')  #can't see disabled text in "Default" theme
     # Create the settings window
@@ -101,6 +107,7 @@ def settings(): # settings() will open the .ini file, allow user edits, save .in
             config['Radio'] = {'baud': values['baud'], 'port':values['radio']}
             config['DMT'] = {'port': values['dmt']}
             config['ALE'] = {'port': values['ale']}
+            config['AUX'] = {'port': values['aux'], 'enable': values['enable']}
 
             window.close()
             with open('dmtalemux.ini', 'w') as configfile:
@@ -111,13 +118,15 @@ def settings(): # settings() will open the .ini file, allow user edits, save .in
 def serial_handler():  # all of the "real work" happens in here
     init = 0   #we start with nothing
     while True:
-        
         if init == 0:  #open the ports 
             mq.put('opening serial ports')
             baud = int(get_config('Radio','baud'))
             radio = serial.Serial(get_config('Radio','port'), baud, timeout=5)
             DMT = serial.Serial(get_config('DMT','port'),baud, timeout=5)    
             ALE = serial.Serial(get_config('ALE','port'),baud, timeout=5)
+            AUXENABLE = get_config('AUX', 'enable') == 'True'
+            if(AUXENABLE):
+                AUX = serial.Serial(get_config('AUX','port'),baud, timeout=5)
             init = 1
         reading = 0;  #initialize a variable
         if init == 1:
@@ -127,6 +136,8 @@ def serial_handler():  # all of the "real work" happens in here
                 lq.put(e.strftime("%Y-%m-%d %H:%M:%S")+reading.hex(' '))
                 DMT.write(reading)
                 ALE.write(reading)
+                if(AUXENABLE):
+                    AUX.write(reading)
                 if DEBUG:
                     print('..data from radio..')
             if (DMT.inWaiting()>0):
@@ -134,6 +145,12 @@ def serial_handler():  # all of the "real work" happens in here
                 radio.write(reading)
                 if DEBUG:
                     print('..data from DMT..')
+            if(AUXENABLE):
+                if (AUX.inWaiting()>0):
+                    reading = AUX.read(AUX.inWaiting())
+                    radio.write(reading)
+                    if DEBUG:
+                        print('..data from AUX..')
             if (ALE.inWaiting()>0):
                 reading = ALE.read(ALE.inWaiting())
                 radio.write(reading)
@@ -160,6 +177,8 @@ def serial_handler():  # all of the "real work" happens in here
                 radio.close()
                 ALE.close()
                 DMT.close()
+                if(AUXENABLE):
+                    AUX.close()
             elif todo == 'OPEN':
                 init = 0
         except queue.Empty:
